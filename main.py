@@ -111,16 +111,14 @@ class ScreenshotWindow:
         # Loop through OCR data to find the word clicked
         for i, word in enumerate(ocr_data["text"]):
             if word.strip() and ocr_data["conf"][i] > 60:  # Filter low-confidence words
-                # Remove non-alphabetic characters from the word
-                cleaned_word = re.sub(r'[^A-Za-z]', '', word)
-                
+                # Remove non-alphabetic characters from the word                
                 # Check if the click is within the word's bounding box
                 if (ocr_data["left"][i] <= x <= ocr_data["left"][i] + ocr_data["width"][i] and
                         ocr_data["top"][i] <= y <= ocr_data["top"][i] + ocr_data["height"][i]):
                     # If the cleaned word is not empty, fetch definition
-                    if cleaned_word:
-                        data = fetch_definition(cleaned_word)
-                        current_overlay = ModernDictionaryOverlay(x, y, cleaned_word, data)
+                    if word:
+                        data = fetch_definition(word)
+                        current_overlay = ModernDictionaryOverlay(x, y, word, data)
                         current_overlay.show()
                         return
                     
