@@ -63,7 +63,6 @@ def capture_screen():
     screen = ImageGrab.grab()
     root = tk.Tk()
     root.attributes("-fullscreen", True)
-    root.attributes("-alpha", 0.5)
     root.grab_set()  # Steal focus
     root.focus_force()
     root.lift()  # Bring the window to the front
@@ -112,6 +111,11 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         self.root.overrideredirect(True)
         self.root.attributes("-alpha", 0.95)
         
+        
+        self.root.attributes('-topmost', True)
+        self.root.focus_force()
+        self.root.grab_set()  # Steal focus
+                
         # Initialize the frame
         super().__init__(master=self.root, 
                         fg_color="#1E1E1E",  # Dark background
@@ -148,21 +152,26 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         
         # Add keyboard bindings
         self.root.bind("<Escape>", lambda e: self.root.destroy())
-        self.root.bind("<Button-1>", self._start_move)
-        self.root.bind("<B1-Motion>", self._on_move)
+        self.root.bind("<FocusOut>", lambda e: self.root.destroy())
         
-        # Make window draggable
-        self._drag_start_x = 0
-        self._drag_start_y = 0
+    def _show_window(self):
+        self.root.deiconify()  # Show the window
+        self.root.lift()  # Raise window to top
+        self.root.focus_force()  # Force focus
         
-    def _start_move(self, event):
-        self._drag_start_x = event.x
-        self._drag_start_y = event.y
-        
-    def _on_move(self, event):
-        x = self.root.winfo_x() + (event.x - self._drag_start_x)
-        y = self.root.winfo_y() + (event.y - self._drag_start_y)
-        self.root.geometry(f"+{x}+{y}")
+        # On Windows, we need these additional calls
+        self.root.attributes('-topmost', True)
+        self.root.update()
+
+    def _on_escape(self, event):
+        self.root.quit()
+        self.root.destroy()
+
+    def _on_focus_out(self, event):
+        # Only destroy if we actually lost focus to another window
+        if not self.root.focus_get():
+            self.root.quit()
+            self.root.destroy()
         
     def _add_content(self, data: Dict[str, Any]):
         if "error" in data:
@@ -188,34 +197,7 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
             pos_label.grid(row=row, column=0, padx=5, pady=(5, 2), sticky="w")
             row += 1
             
-            # Definitions
-            for definition in meaning.get("definitions", []):
-                def_text = textwrap.fill(definition['definition'], width=50)
-                def_label = ctk.CTkLabel(
-                    self.content_frame,
-                    text=f"• {def_text}",
-                    font=ctk.CTkFont(family="Inter", size=11),
-                    text_color="#CCCCCC",  # Light gray for definitions
-                    wraplength=300,
-                    justify="left"
-                )
-                def_label.grid(row=row, column=0, padx=(15, 5), pady=2, sticky="w")
-                row += 1
-                
-                # Example if available
-                if 'example' in definition:
-                    example_text = textwrap.fill(f"\"{definition['example']}\"", width=45)
-                    example_label = ctk.CTkLabel(
-                        self.content_frame,
-                        text=example_text,
-                        font=ctk.CTkFont(family="Inter", size=10, slant="italic"),
-                        text_color="#888888",  # Darker gray for examples
-                        wraplength=280
-                    )
-                    example_label.grid(row=row, column=0, padx=(25, 5), pady=(0, 2), sticky="w")
-                    row += 1
-            
-            # Add synonyms if available
+                        # Add synonyms if available
             if meaning.get("synonyms"):
                 syn_text = "Synonyms: " + ", ".join(meaning["synonyms"][:5])
                 syn_label = ctk.CTkLabel(
@@ -227,6 +209,35 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
                 )
                 syn_label.grid(row=row, column=0, padx=(15, 5), pady=(2, 5), sticky="w")
                 row += 1
+            
+            # Definitions
+            for definition in meaning.get("definitions", []):
+                def_text = textwrap.fill(definition['definition'], width=75)
+                def_label = ctk.CTkLabel(
+                    self.content_frame,
+                    text=f"• {def_text}",
+                    font=ctk.CTkFont(family="Inter", size=11),
+                    text_color="#CCCCCC",  # Light gray for definitions
+                    wraplength=450,
+                    justify="left"
+                )
+                def_label.grid(row=row, column=0, padx=(15, 5), pady=2, sticky="w")
+                row += 1
+                
+                # Example if available
+                if 'example' in definition:
+                    example_text = textwrap.fill(f"\"{definition['example']}\"", width=70)
+                    example_label = ctk.CTkLabel(
+                        self.content_frame,
+                        text=example_text,
+                        font=ctk.CTkFont(family="Inter", size=10, slant="italic"),
+                        text_color="#888888",  # Darker gray for examples
+                        wraplength=320
+                    )
+                    example_label.grid(row=row, column=0, padx=(25, 5), pady=(0, 2), sticky="w")
+                    row += 1
+            
+
 
     def _adjust_window_size(self):
         # Get required height for content
@@ -237,7 +248,7 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         
         # Update window size
         self.content_frame.configure(height=max_height - 60)
-        self.root.geometry(f"350x{max_height}")
+        self.root.geometry(f"500x{max_height}")
         
     def show(self):
         self.root.mainloop()
