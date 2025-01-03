@@ -10,6 +10,8 @@ import os
 import json
 from pytesseract import Output
 import customtkinter as ctk
+from typing import Dict, Any
+import textwrap
 
 BASE_DIR = os.path.dirname(__file__)
 TESSERACT_PATH = os.path.join(BASE_DIR, "bin", "tesseract.exe")
@@ -96,65 +98,153 @@ def process_selection(x, y):
         if word.strip() and ocr_data["conf"][i] > 60:  # Filter low-confidence
             if (ocr_data["left"][i] <= x <= ocr_data["left"][i] + ocr_data["width"][i] and
                     ocr_data["top"][i] <= y <= ocr_data["top"][i] + ocr_data["height"][i]):
-                show_definition(word, x, y)
+                data = fetch_definition(word)
+                show_definition(word, x, y, data)
                 return
-    show_definition("No word detected.", x, y)
+    show_definition("No word detected.", x, y, data)
 
 # Display word definition
-def show_definition(word, x, y):
-    data = fetch_definition(word)
-    
-    # Create a borderless window with curved edges
-    popup = tk.Tk()
-    popup.geometry(f"400x300+{x}+{y}")
-    popup.overrideredirect(True)  # Borderless window
-    popup.grab_set()
-    popup.focus_force()
+class ModernDictionaryOverlay(ctk.CTkFrame):
+    def __init__(self, x: int, y: int, word: str, data: Dict[str, Any]):
+        # Create the main window
+        self.root = ctk.CTk()
+        self.root.geometry(f"+{x}+{y}")
+        self.root.overrideredirect(True)
+        self.root.attributes("-alpha", 0.95)
+        
+        # Initialize the frame
+        super().__init__(master=self.root, 
+                        fg_color="#1E1E1E",  # Dark background
+                        corner_radius=15)     # Rounded corners
+        self.pack(fill="both", expand=True, padx=2, pady=2)
+        
+        # Configure grid
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Add word title
+        self.title = ctk.CTkLabel(
+            self,
+            text=word.capitalize(),
+            font=ctk.CTkFont(family="Inter", size=14, weight="bold"),
+            text_color="#FFFFFF"
+        )
+        self.title.grid(row=0, column=0, padx=15, pady=(10, 5), sticky="w")
+        
+        # Create scrollable frame for content
+        self.content_frame = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            corner_radius=0,
+            height=200  # Initial height, will be adjusted
+        )
+        self.content_frame.grid(row=1, column=0, sticky="nsew", padx=10)
+        self.content_frame.grid_columnconfigure(0, weight=1)
+        
+        # Add content
+        self._add_content(data)
+        
+        # Calculate and set proper window size
+        self._adjust_window_size()
+        
+        # Add keyboard bindings
+        self.root.bind("<Escape>", lambda e: self.root.destroy())
+        self.root.bind("<Button-1>", self._start_move)
+        self.root.bind("<B1-Motion>", self._on_move)
+        
+        # Make window draggable
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        
+    def _start_move(self, event):
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        
+    def _on_move(self, event):
+        x = self.root.winfo_x() + (event.x - self._drag_start_x)
+        y = self.root.winfo_y() + (event.y - self._drag_start_y)
+        self.root.geometry(f"+{x}+{y}")
+        
+    def _add_content(self, data: Dict[str, Any]):
+        if "error" in data:
+            label = ctk.CTkLabel(
+                self.content_frame,
+                text=data["error"],
+                font=ctk.CTkFont(family="Inter", size=12),
+                text_color="#FF6B6B",  # Error in red
+                wraplength=300
+            )
+            label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+            return
 
-    # Make the background black and slightly transparent
-    popup.config(bg="#000000")
-    popup.attributes("-alpha", 0.8)  # Adjust transparency
-
-    # Title label with modern font and smaller size
-    title_label = tk.Label(popup, text=f"Word: {word}", font=("Segoe UI", 14, "bold"), fg="white", bg="#000000", wraplength=380)
-    title_label.pack(pady=10)
-
-    # Frame for the dictionary meanings
-    frame = tk.Frame(popup, bg="#000000")
-    frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-    y_offset = 10  # Starting Y position for text
-    total_height = 0  # To calculate total height of the content
-
-    # Add a label for each meaning
-    if "error" in data:
-        error_label = tk.Label(frame, text=data["error"], font=("Segoe UI", 12), fg="white", bg="#000000", wraplength=380)
-        error_label.pack(anchor="w", pady=(y_offset, 0))
-        total_height += 30  # Adding height for the error label
-    else:
+        row = 0
         for meaning in data[0].get("meanings", []):
-            part_of_speech_label = tk.Label(frame, text=f"Type: {meaning['partOfSpeech']}", font=("Segoe UI", 12, "bold"), fg="white", bg="#000000", wraplength=380)
-            part_of_speech_label.pack(anchor="w", pady=(y_offset, 0))
-            y_offset += 20  # Increase space after part of speech
-            total_height += 30  # Adding height for the part of speech label
+            # Part of speech
+            pos_label = ctk.CTkLabel(
+                self.content_frame,
+                text=meaning['partOfSpeech'],
+                font=ctk.CTkFont(family="Inter", size=12, weight="bold"),
+                text_color="#4D96FF"  # Light blue for part of speech
+            )
+            pos_label.grid(row=row, column=0, padx=5, pady=(5, 2), sticky="w")
+            row += 1
             
+            # Definitions
             for definition in meaning.get("definitions", []):
-                definition_label = tk.Label(frame, text=f"- {definition['definition']}", font=("Segoe UI", 12), fg="white", bg="#000000", wraplength=380)
-                definition_label.pack(anchor="w", pady=(y_offset, 0))
-                y_offset += 20  # Increase space after each definition
-                total_height += 30  # Adding height for the definition label
+                def_text = textwrap.fill(definition['definition'], width=50)
+                def_label = ctk.CTkLabel(
+                    self.content_frame,
+                    text=f"• {def_text}",
+                    font=ctk.CTkFont(family="Inter", size=11),
+                    text_color="#CCCCCC",  # Light gray for definitions
+                    wraplength=300,
+                    justify="left"
+                )
+                def_label.grid(row=row, column=0, padx=(15, 5), pady=2, sticky="w")
+                row += 1
+                
+                # Example if available
+                if 'example' in definition:
+                    example_text = textwrap.fill(f"\"{definition['example']}\"", width=45)
+                    example_label = ctk.CTkLabel(
+                        self.content_frame,
+                        text=example_text,
+                        font=ctk.CTkFont(family="Inter", size=10, slant="italic"),
+                        text_color="#888888",  # Darker gray for examples
+                        wraplength=280
+                    )
+                    example_label.grid(row=row, column=0, padx=(25, 5), pady=(0, 2), sticky="w")
+                    row += 1
+            
+            # Add synonyms if available
+            if meaning.get("synonyms"):
+                syn_text = "Synonyms: " + ", ".join(meaning["synonyms"][:5])
+                syn_label = ctk.CTkLabel(
+                    self.content_frame,
+                    text=syn_text,
+                    font=ctk.CTkFont(family="Inter", size=10),
+                    text_color="#6C757D",
+                    wraplength=300
+                )
+                syn_label.grid(row=row, column=0, padx=(15, 5), pady=(2, 5), sticky="w")
+                row += 1
 
-            total_height += 20  # Additional space between different meanings
+    def _adjust_window_size(self):
+        # Get required height for content
+        content_height = sum(child.winfo_reqheight() for child in self.content_frame.winfo_children())
+        
+        # Set maximum height to 400 pixels or content height, whichever is smaller
+        max_height = min(content_height + 60, 400)  # 60 pixels for padding and title
+        
+        # Update window size
+        self.content_frame.configure(height=max_height - 60)
+        self.root.geometry(f"350x{max_height}")
+        
+    def show(self):
+        self.root.mainloop()
 
-    # Resize the window based on content height (total height)
-    popup.geometry(f"400x{total_height + 50}+{x}+{y}")  # Adjust window height
-
-    # Bind the escape key to close the window
-    popup.bind("<Escape>", lambda e: popup.destroy())
-    popup.focus_force()
-    popup.mainloop()
-
-
+def show_definition(word: str, x: int, y: int, data: Dict[str, Any]):
+    overlay = ModernDictionaryOverlay(x, y, word, data)
+    overlay.show()
 
 # System tray setup
 def setup_tray_icon():
