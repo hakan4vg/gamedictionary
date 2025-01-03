@@ -12,6 +12,7 @@ from pytesseract import Output
 import customtkinter as ctk
 from typing import Dict, Any
 import textwrap
+import re
 
 BASE_DIR = os.path.dirname(__file__)
 TESSERACT_PATH = os.path.join(BASE_DIR, "bin", "tesseract.exe")
@@ -26,6 +27,11 @@ pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 os.environ["TESSDATA_PREFIX"] = TESSDATA_PATH
 
 cache = {}
+
+screenshot_window = None
+current_overlay = None
+is_active = False
+is_root_destroyed = False  
 
 # Load or initialize cache
 def load_cache():
@@ -57,38 +63,110 @@ def fetch_definition(word):
     else:
         return {"error": f"Word '{word}' not found."}
 listener = None
+current_overlay = None
+screenshot_window = None
+
+
+class ScreenshotWindow:
+    def __init__(self):
+        
+        global is_active, is_root_destroyed
+        is_root_destroyed = False
+        is_active = True  # Mark the window as active
+        
+        self.root = tk.Tk()
+        self.root.attributes("-fullscreen", True)
+        self.root.attributes('-topmost', True)
+        
+        # Take screenshot
+        self.screen = ImageGrab.grab()
+        self.screen_photo = ImageTk.PhotoImage(self.screen)
+        
+        # Create canvas
+        self.canvas = tk.Canvas(self.root, bg="black")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.screen_photo)
+        
+        # Bind events
+        self.canvas.bind("<Button-1>", self.on_click)
+        self.root.bind("<Escape>", self.on_escape)
+        
+
+    def on_click(self, event):
+        global current_overlay
+        x, y = event.x, event.y
+        
+        # Close previous overlay if exists
+        try:
+            if current_overlay and current_overlay.root.winfo_exists():
+                current_overlay.root.destroy()
+                current_overlay = None
+        except tk.TclError:
+            current_overlay = None
+        
+        # Capture screen and use OCR to detect text
+        screen = ImageGrab.grab()
+        ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
+        
+        # Loop through OCR data to find the word clicked
+        for i, word in enumerate(ocr_data["text"]):
+            if word.strip() and ocr_data["conf"][i] > 60:  # Filter low-confidence words
+                # Remove non-alphabetic characters from the word
+                cleaned_word = re.sub(r'[^A-Za-z]', '', word)
+                
+                # Check if the click is within the word's bounding box
+                if (ocr_data["left"][i] <= x <= ocr_data["left"][i] + ocr_data["width"][i] and
+                        ocr_data["top"][i] <= y <= ocr_data["top"][i] + ocr_data["height"][i]):
+                    # If the cleaned word is not empty, fetch definition
+                    if cleaned_word:
+                        data = fetch_definition(cleaned_word)
+                        current_overlay = ModernDictionaryOverlay(x, y, cleaned_word, data)
+                        current_overlay.show()
+                        return
+                    
+        # If no word detected, show an overlay indicating so
+        current_overlay = ModernDictionaryOverlay(x, y, "No word detected.", {"error": "No word detected at this position"})
+        current_overlay.show()
+
+
+
+    def on_escape(self, event):
+        global current_overlay, screenshot_window, is_active, is_root_destroyed
+
+        if not is_active or is_root_destroyed:  # Prevent multiple calls after the window is destroyed
+            return
+
+        # Ensure that the overlay exists and is valid before attempting to destroy it
+        if current_overlay and current_overlay.root:
+            try:
+                if current_overlay.root.winfo_exists():
+                    current_overlay.root.destroy()
+                    current_overlay = None
+            except tk.TclError:
+                current_overlay = None
+
+        # Mark the root as destroyed
+        is_root_destroyed = True
+        is_active = False  # Mark as inactive
+
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except tk.TclError:
+            pass  # Ignore the error if root is already destroyed
+
+        screenshot_window = None
+        restart_listener()
+        
+        
 # Process selection
 def capture_screen():
-    global listener
-    screen = ImageGrab.grab()
-    root = tk.Tk()
-    root.attributes("-fullscreen", True)
-    root.grab_set()  # Steal focus
-    root.focus_force()
-    root.lift()  # Bring the window to the front
-
-    # Static screen capture as background
-    screen_photo = ImageTk.PhotoImage(screen)
-    canvas = tk.Canvas(root, bg="black")
-    canvas.pack(fill=tk.BOTH, expand=True)
-    canvas.create_image(0, 0, anchor=tk.NW, image=screen_photo)
-
-    def on_click(event):
-        x, y = event.x, event.y
-        root.quit()
-        root.destroy()
-        process_selection(x, y)
-        restart_listener()  # Restart listener after selection
-
-    def on_escape(event):
-        global listener
-        root.quit()
-        root.destroy()
-        restart_listener()  # Restart listener after Escape
-
-    canvas.bind("<Button-1>", on_click)
-    root.bind("<Escape>", on_escape)
-    root.mainloop()
+    global screenshot_window, listener
+    if listener:
+        listener.stop()
+    if screenshot_window is None:
+        screenshot_window = ScreenshotWindow()
+        screenshot_window.root.mainloop()
 
 def process_selection(x, y):
     screen = ImageGrab.grab()
