@@ -35,12 +35,12 @@ Game Dictionary is a Python application that allows users to capture a screensho
     - Update the TESSERACT_PATH and TESSDATA_PATH variables in main.py to point to your Tesseract installation.
 
 ## Usage
- 1 - Run the application:
+1. Run the application:
     - python main.py
- 2 - The application will start and a system tray icon will appear.
- 3 - Use the default keyboard shortcut Ctrl+Alt+S to capture a screenshot.
- 4 - Click on a word in the screenshot to see its definition in the overlay window.
- 5 - To change the keyboard shortcut, right-click the system tray icon and select "Preferences".
+2. The application will start and a system tray icon will appear.
+3. Use the default keyboard shortcut Ctrl+Alt+S to capture a screenshot.
+4. Click on a word in the screenshot to see its definition in the overlay window.
+5. To change the keyboard shortcut, right-click the system tray icon and select "Preferences".
 
 ## Customization
 - You can change the default keyboard shortcut by modifying the SHORTCUT variable in main.py.
