@@ -13,6 +13,8 @@ import customtkinter as ctk
 from typing import Dict, Any
 import textwrap
 import re
+import asyncio
+import threading
 
 BASE_DIR = os.path.dirname(__file__)
 TESSERACT_PATH = os.path.join(BASE_DIR, "bin", "tesseract.exe")
@@ -62,14 +64,13 @@ def fetch_definition(word):
         return data
     else:
         return {"error": f"Word '{word}' not found."}
+        
 listener = None
 current_overlay = None
 screenshot_window = None
 
-
 class ScreenshotWindow:
     def __init__(self):
-        
         global is_active, is_root_destroyed
         is_root_destroyed = False
         is_active = True  # Mark the window as active
@@ -87,15 +88,47 @@ class ScreenshotWindow:
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.screen_photo)
         
+        # Create loading indicator (centered at the top)
+        self.loading_label = tk.Label(self.root, text="Processing OCR...", font=("Helvetica", 20), fg="white", bg="black")
+        self.loading_label.place(relx=0.5, rely=0.05, anchor="center")
+        
+        # Disable clicks while processing
+        self.root.config(cursor="wait")
+        
         # Bind events
         self.canvas.bind("<Button-1>", self.on_click)
         self.root.bind("<Escape>", self.on_escape)
         
+        self.ocr_done = asyncio.Event()  # Event to signal OCR completion
+        self.processing_ocr = False  # Flag to track if OCR is in progress
+
+    async def process_ocr(self):
+        self.processing_ocr = True
+        # Simulate OCR processing delay
+        screen = ImageGrab.grab()
+        self.ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
+        
+        # After OCR processing completes
+        self.processing_ocr = False
+        self.ocr_done.set()  # Signal that OCR processing is finished
+        self.loading_label.destroy()
+        self.root.config(cursor="")  # Reset cursor to default (allow clicks)
+        await asyncio.sleep(1)  # Delay to show the "OCR Done!" message briefly
 
     def on_click(self, event):
+        if self.processing_ocr:
+            # Wait for OCR to finish before proceeding
+            self.ocr_done.clear()
+            asyncio.ensure_future(self.wait_for_ocr(event.x, event.y))
+        else:
+            self.handle_click(event.x, event.y)
+
+    async def wait_for_ocr(self, x, y):
+        await self.ocr_done.wait()
+        self.handle_click(x, y)
+
+    def handle_click(self, x, y):
         global current_overlay
-        x, y = event.x, event.y
-        
         # Close previous overlay if exists
         try:
             if current_overlay and current_overlay.root.winfo_exists():
@@ -104,17 +137,12 @@ class ScreenshotWindow:
         except tk.TclError:
             current_overlay = None
         
-        # Capture screen and use OCR to detect text
-        screen = ImageGrab.grab()
-        ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
-        
         # Loop through OCR data to find the word clicked
-        for i, word in enumerate(ocr_data["text"]):
-            if word.strip() and ocr_data["conf"][i] > 60:  # Filter low-confidence words
-                # Remove non-alphabetic characters from the word                
+        for i, word in enumerate(self.ocr_data["text"]):
+            if word.strip() and self.ocr_data["conf"][i] > 60:  # Filter low-confidence words
                 # Check if the click is within the word's bounding box
-                if (ocr_data["left"][i] <= x <= ocr_data["left"][i] + ocr_data["width"][i] and
-                        ocr_data["top"][i] <= y <= ocr_data["top"][i] + ocr_data["height"][i]):
+                if (self.ocr_data["left"][i] <= x <= self.ocr_data["left"][i] + self.ocr_data["width"][i] and
+                        self.ocr_data["top"][i] <= y <= self.ocr_data["top"][i] + self.ocr_data["height"][i]):
                     # If the cleaned word is not empty, fetch definition
                     if word:
                         data = fetch_definition(word)
@@ -125,8 +153,6 @@ class ScreenshotWindow:
         # If no word detected, show an overlay indicating so
         current_overlay = ModernDictionaryOverlay(x, y, "No word detected.", {"error": "No word detected at this position"})
         current_overlay.show()
-
-
 
     def on_escape(self, event):
         global current_overlay, screenshot_window, is_active, is_root_destroyed
@@ -155,17 +181,24 @@ class ScreenshotWindow:
 
         screenshot_window = None
         restart_listener()
-        
-        
-# Process selection
+
+
+# Capture screen asynchronously
 def capture_screen():
     global screenshot_window, listener
     if listener:
         listener.stop()
     if screenshot_window is None:
         screenshot_window = ScreenshotWindow()
+        # Start OCR processing in background thread
+        threading.Thread(target=asyncio.run, args=(screenshot_window.process_ocr(),)).start()
         screenshot_window.root.mainloop()
 
+def show_definition(word: str, x: int, y: int, data: Dict[str, Any]):
+    overlay = ModernDictionaryOverlay(x, y, word, data)
+    overlay.show()   
+
+# Process selection
 def process_selection(x, y):
     screen = ImageGrab.grab()
     ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
@@ -328,10 +361,6 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         
     def show(self):
         self.root.mainloop()
-
-def show_definition(word: str, x: int, y: int, data: Dict[str, Any]):
-    overlay = ModernDictionaryOverlay(x, y, word, data)
-    overlay.show()
 
 # System tray setup
 def setup_tray_icon():
