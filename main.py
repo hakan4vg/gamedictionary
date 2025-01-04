@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import simpledialog, Text, Scrollbar
+from tkinter import simpledialog
 from PIL import ImageGrab, Image, ImageTk
 import pytesseract
 import pystray
@@ -29,11 +29,10 @@ pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 os.environ["TESSDATA_PREFIX"] = TESSDATA_PATH
 
 cache = {}
-
 screenshot_window = None
 current_overlay = None
 is_active = False
-is_root_destroyed = False  
+is_root_destroyed = False
 
 # Load or initialize cache
 def load_cache():
@@ -64,10 +63,6 @@ def fetch_definition(word):
         return data
     else:
         return {"error": f"Word '{word}' not found."}
-        
-listener = None
-current_overlay = None
-screenshot_window = None
 
 class ScreenshotWindow:
     def __init__(self):
@@ -182,53 +177,22 @@ class ScreenshotWindow:
         screenshot_window = None
         restart_listener()
 
-
-# Capture screen asynchronously
-def capture_screen():
-    global screenshot_window, listener
-    if listener:
-        listener.stop()
-    if screenshot_window is None:
-        screenshot_window = ScreenshotWindow()
-        # Start OCR processing in background thread
-        threading.Thread(target=asyncio.run, args=(screenshot_window.process_ocr(),)).start()
-        screenshot_window.root.mainloop()
-
-def show_definition(word: str, x: int, y: int, data: Dict[str, Any]):
-    overlay = ModernDictionaryOverlay(x, y, word, data)
-    overlay.show()   
-
-# Process selection
-def process_selection(x, y):
-    screen = ImageGrab.grab()
-    ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
-    for i, word in enumerate(ocr_data["text"]):
-        if word.strip() and ocr_data["conf"][i] > 60:  # Filter low-confidence
-            if (ocr_data["left"][i] <= x <= ocr_data["left"][i] + ocr_data["width"][i] and
-                    ocr_data["top"][i] <= y <= ocr_data["top"][i] + ocr_data["height"][i]):
-                data = fetch_definition(word)
-                show_definition(word, x, y, data)
-                return
-    show_definition("No word detected.", x, y, data)
-
-# Display word definition
 class ModernDictionaryOverlay(ctk.CTkFrame):
     def __init__(self, x: int, y: int, word: str, data: Dict[str, Any]):
         # Create the main window
         self.root = ctk.CTk()
-        self.root.geometry(f"+{x}+{y}")
+        self.root.attributes("-alpha", 0.0)
         self.root.overrideredirect(True)
-        self.root.attributes("-alpha", 0.95)
-        
-        
+        #self.root.attributes("-alpha", 0.95)
+    
         self.root.attributes('-topmost', True)
-        self.root.focus_force()
-        self.root.grab_set()  # Steal focus
-                
+        
         # Initialize the frame
         super().__init__(master=self.root, 
-                        fg_color="#1E1E1E",  # Dark background
-                        corner_radius=15)     # Rounded corners
+                        fg_color="#1E1E1E",
+                        border_color="1E1E1E",
+                        border_width=0,
+                        corner_radius=15)
         self.pack(fill="both", expand=True, padx=2, pady=2)
         
         # Configure grid
@@ -246,9 +210,11 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         # Create scrollable frame for content
         self.content_frame = ctk.CTkScrollableFrame(
             self,
-            fg_color="transparent",
-            corner_radius=0,
-            height=200  # Initial height, will be adjusted
+            fg_color="#1E1E1E", 
+            corner_radius=15, 
+            border_color="#1E1E1E", 
+            border_width=0,  
+            height=200
         )
         self.content_frame.grid(row=1, column=0, sticky="nsew", padx=10)
         self.content_frame.grid_columnconfigure(0, weight=1)
@@ -256,12 +222,77 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         # Add content
         self._add_content(data)
         
+        # Set initial size and update to get actual dimensions
+        self.root.geometry("500x1")  # Set width only
+        self.root.update()
+        
         # Calculate and set proper window size
         self._adjust_window_size()
+        self.root.update()  # Update again to ensure size is applied
+        
+        # Now position the window based on its actual size
+        self._position_window(x, y)
         
         # Add keyboard bindings
         self.root.bind("<Escape>", lambda e: self.root.destroy())
         self.root.bind("<FocusOut>", lambda e: self.root.destroy())
+        
+        # Final focus
+        self.root.focus_force()
+        self.root.grab_set()
+
+        self.root.attributes("-alpha", 0.95)
+        
+    def _position_window(self, x: int, y: int):
+        # Get screen and window dimensions
+        screen_width = self.get_screen_width()
+        screen_height = self.get_screen_height()
+        window_width = self.root.winfo_width()
+        window_height = self.root.winfo_height()
+        
+        # Determine which quadrant the click is in
+        is_left = x < screen_width / 2
+        is_top = y < screen_height / 2
+        
+        # Calculate position based on quadrant
+        if is_left and is_top:  # Top Left -> Bottom Right
+            new_x = x
+            new_y = y
+        elif not is_left and is_top:  # Top Right -> Bottom Left
+            new_x = x - window_width
+            new_y = y
+        elif is_left and not is_top:  # Bottom Left -> Top Right
+            new_x = x
+            new_y = y - window_height
+        else:  # Bottom Right -> Top Left
+            new_x = x - window_width
+            new_y = y - window_height
+        
+        # Ensure window stays within screen bounds
+        new_x = max(0, min(new_x, screen_width - window_width))
+        new_y = max(0, min(new_y, screen_height - window_height))
+        
+        self.root.geometry(f"+{new_x}+{new_y}")
+
+    def _adjust_window_size(self):
+        # Get required height for content
+        content_height = sum(child.winfo_reqheight() for child in self.content_frame.winfo_children())
+        
+        # Add padding for title and margins
+        total_height = content_height + 60  # 60 pixels for padding and title
+        
+        # Set maximum height to 400 pixels
+        max_height = min(total_height, 400)
+        
+        # Update window size
+        self.content_frame.configure(height=max_height - 60)
+        self.root.geometry(f"500x{max_height}")
+           
+    def get_screen_width(self):
+        return self.root.winfo_screenwidth()
+
+    def get_screen_height(self):
+        return self.root.winfo_screenheight()
         
     def _show_window(self):
         self.root.deiconify()  # Show the window
@@ -306,7 +337,7 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
             pos_label.grid(row=row, column=0, padx=5, pady=(5, 2), sticky="w")
             row += 1
             
-                        # Add synonyms if available
+            # Add synonyms if available
             if meaning.get("synonyms"):
                 syn_text = "Synonyms: " + ", ".join(meaning["synonyms"][:5])
                 syn_label = ctk.CTkLabel(
@@ -345,22 +376,24 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
                     )
                     example_label.grid(row=row, column=0, padx=(25, 5), pady=(0, 2), sticky="w")
                     row += 1
-            
 
 
-    def _adjust_window_size(self):
-        # Get required height for content
-        content_height = sum(child.winfo_reqheight() for child in self.content_frame.winfo_children())
-        
-        # Set maximum height to 400 pixels or content height, whichever is smaller
-        max_height = min(content_height + 60, 400)  # 60 pixels for padding and title
-        
-        # Update window size
-        self.content_frame.configure(height=max_height - 60)
-        self.root.geometry(f"500x{max_height}")
         
     def show(self):
         self.root.mainloop()
+
+# Capture screen asynchronously
+def capture_screen():
+    global screenshot_window
+    if screenshot_window is None:
+        screenshot_window = ScreenshotWindow()
+        # Start OCR processing in background thread
+        threading.Thread(target=asyncio.run, args=(screenshot_window.process_ocr(),)).start()
+        screenshot_window.root.mainloop()
+
+def show_definition(word: str, x: int, y: int, data: Dict[str, Any]):
+    overlay = ModernDictionaryOverlay(x, y, word, data)
+    overlay.show()   
 
 # System tray setup
 def setup_tray_icon():
@@ -397,7 +430,6 @@ def on_activate():
     
 listener = None
 
-
 def restart_listener():
     global listener
     if listener and listener.is_alive():
@@ -408,7 +440,6 @@ def setup_shortcut():
     global listener
     listener = keyboard.GlobalHotKeys({SHORTCUT: on_activate})
     listener.start()
-
 
 # Main function
 def main():

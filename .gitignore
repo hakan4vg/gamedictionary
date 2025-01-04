@@ -2,5 +2,7 @@
 /bin/
 main2.py
 dictionary_cache.json
-
- 
+/build/
+/dist
+/main.spec
+dictionary_cache.json
