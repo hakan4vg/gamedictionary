@@ -6,3 +6,8 @@ dictionary_cache.json
 /dist
 /main.spec
 dictionary_cache.json
+testmain.py
+testnltk.py
+testnltkwordnet.py
+wiktionaryextract.py
+dictionary_cache.json

@@ -10,11 +10,19 @@ import os
 import json
 from pytesseract import Output
 import customtkinter as ctk
-from typing import Dict, Any
+from typing import Dict, Any, Tuple, List
 import textwrap
 import re
 import asyncio
 import threading
+import math
+from nltk.corpus import words
+from nltk.corpus import wordnet as wn
+import nltk
+from nltk import download
+download("wordnet")
+nltk.download('words')
+
 
 BASE_DIR = os.path.dirname(__file__)
 TESSERACT_PATH = os.path.join(BASE_DIR, "bin", "tesseract.exe")
@@ -99,16 +107,41 @@ class ScreenshotWindow:
 
     async def process_ocr(self):
         self.processing_ocr = True
-        # Simulate OCR processing delay
+        # Take screenshot and process OCR
         screen = ImageGrab.grab()
         self.ocr_data = pytesseract.image_to_data(screen, output_type=Output.DICT)
+        
+        # Process OCR data into characters list
+        self.characters = []
+        for i in range(len(self.ocr_data['text'])):
+            if self.ocr_data['text'][i].strip():  # Only process non-empty text
+                char = self.ocr_data['text'][i]
+                x = self.ocr_data['left'][i]
+                y = self.ocr_data['top'][i]
+                width = self.ocr_data['width'][i]
+                height = self.ocr_data['height'][i]
+                conf = self.ocr_data['conf'][i]
+                
+                # Add each character individually
+                for idx, single_char in enumerate(char):
+                    # Calculate proportional position for each character
+                    char_width = width / len(char)
+                    char_x = x + (idx * char_width)
+                    self.characters.append((
+                        single_char,
+                        int(char_x),
+                        y,
+                        int(char_width),
+                        height,
+                        conf
+                    ))
         
         # After OCR processing completes
         self.processing_ocr = False
         self.ocr_done.set()  # Signal that OCR processing is finished
         self.loading_label.destroy()
-        self.root.config(cursor="")  # Reset cursor to default (allow clicks)
-        await asyncio.sleep(1)  # Delay to show the "OCR Done!" message briefly
+        self.root.config(cursor="")  # Reset cursor to default
+        await asyncio.sleep(1)  # Brief delay to ensure UI updates the "OCR Done!" message briefly
 
     def on_click(self, event):
         if self.processing_ocr:
@@ -122,32 +155,158 @@ class ScreenshotWindow:
         await self.ocr_done.wait()
         self.handle_click(x, y)
 
-    def handle_click(self, x, y):
+    def find_closest_chars(self, x: int, y: int, radius: int = 50) -> Tuple[Dict, List]:
+        """Find closest character and nearby characters within radius."""
+        timer = 0;
+        
+        distances = []
+        for char, char_x, char_y, width, height, conf in self.characters:
+            center_x = char_x + width / 2
+            center_y = char_y + height / 2
+            distance = math.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+            
+            if distance <= radius:
+                distances.append({
+                    'char': char,
+                    'distance': distance,
+                    'x': char_x,
+                    'y': char_y,
+                    'width': width,
+                    'height': height,
+                    'center_x': center_x,
+                    'center_y': center_y
+                })
+        
+        if not distances:
+            return None, []
+            
+        distances.sort(key=lambda x: x['distance'])
+        
+        return distances[0], distances
+
+    def find_possible_words(self, x: int, y: int, radius: int = 50) -> List[str]:
+        """Find all possible words containing the character at clicked position."""
+        closest_char, nearby_chars = self.find_closest_chars(x, y, radius)
+        if not closest_char or not nearby_chars:
+            return []
+
+        # Group characters by line (y-position)
+        chars_by_y = {}
+        base_y = closest_char['y']
+        max_y_diff = 5
+
+        for char in nearby_chars:
+            y_pos = char['y']
+            if abs(y_pos - base_y) <= max_y_diff:
+                if y_pos not in chars_by_y:
+                    chars_by_y[y_pos] = []
+                chars_by_y[y_pos].append(char)
+
+        # Sort each line by x position
+        for y_pos in chars_by_y:
+            chars_by_y[y_pos].sort(key=lambda x: x['x'])
+
+        # Find the line containing clicked character
+        target_line = None
+        for y_pos, line_chars in chars_by_y.items():
+            if any(char['x'] == closest_char['x'] and char['y'] == closest_char['y'] for char in line_chars):
+                target_line = line_chars
+                break
+
+        if not target_line:
+            return []
+
+        # Convert target line to format compatible with your original code
+        char_positions = [(char['char'], char['x'], char['y'], char['width'], char['height']) 
+                        for char in target_line]
+        
+        # Find clicked character index
+        clicked_idx = next(i for i, (char, x, y, w, h) in enumerate(char_positions) 
+                            if x == closest_char['x'] and y == closest_char['y'])
+
+        # Generate candidates using modified logic
+        candidates = []
+        max_gap = 20  # Maximum pixel gap between characters to be considered part of the same word
+        
+        # Continue iterating left and right without breaking early on finding a valid word
+        for left in range(clicked_idx, -1, -1):
+            if left < clicked_idx and (char_positions[left + 1][1] - 
+                (char_positions[left][1] + char_positions[left][3]) > max_gap):
+                break
+
+            for right in range(clicked_idx, len(char_positions)):
+                if right > 0 and (char_positions[right][1] - 
+                    (char_positions[right - 1][1] + char_positions[right - 1][3]) > max_gap):
+                    break
+
+                word = ''.join(char for char, *_ in char_positions[left:right + 1])
+                # Clean the word
+                word = re.sub(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', word)
+                if word and len(word) > 1:  # Only add words with 2 or more characters
+                    # Calculate how centered the clicked character is in this word
+                    word_center_idx = (right - left) / 2
+                    click_offset = abs(clicked_idx - left - word_center_idx)
+                    candidates.append((word, click_offset, len(word)))
+
+        # Validate words using dictionary API
+        valid_words = []
+        seen = set()
+        
+        for word, offset, length in candidates:
+            if word.lower() not in seen:
+                word = word.lower()
+                if word in cache:
+                    valid_words.append((word, offset, length))
+                    seen.add(word)
+                else:
+                    response = nltk.corpus.wordnet.synsets(word)
+                    if response:
+                        valid_words.append((word, offset, length))
+                        seen.add(word)
+
+
+        # Sort by:
+        # 1. How centered the clicked character is (smaller offset is better)
+        # 2. Word length (longer is better)
+        # 3. Alphabetically
+        valid_words.sort(key=lambda x: (-x[2], x[1], x[0]))
+        best_word = valid_words[0][0] if valid_words else None
+        if best_word:
+            cache[best_word] = fetch_definition(best_word) 
+            save_cache()
+        # Extract just the words from the sorted list
+        result = [word for word, _, _ in valid_words]
+        print("Found valid words:", result)
+        return result
+
+        
+    def handle_click(self, x: int, y: int):
+        """Process click and show word definition."""
         global current_overlay
-        # Close previous overlay if exists
         try:
             if current_overlay and current_overlay.root.winfo_exists():
                 current_overlay.root.destroy()
                 current_overlay = None
         except tk.TclError:
             current_overlay = None
+
+        valid_words = self.find_possible_words(x, y)
         
-        # Loop through OCR data to find the word clicked
-        for i, word in enumerate(self.ocr_data["text"]):
-            if word.strip() and self.ocr_data["conf"][i] > 60:  # Filter low-confidence words
-                # Check if the click is within the word's bounding box
-                if (self.ocr_data["left"][i] <= x <= self.ocr_data["left"][i] + self.ocr_data["width"][i] and
-                        self.ocr_data["top"][i] <= y <= self.ocr_data["top"][i] + self.ocr_data["height"][i]):
-                    # If the cleaned word is not empty, fetch definition
-                    if word:
-                        data = fetch_definition(word)
-                        current_overlay = ModernDictionaryOverlay(x, y, word, data)
-                        current_overlay.show()
-                        return
-                    
-        # If no word detected, show an overlay indicating so
-        current_overlay = ModernDictionaryOverlay(x, y, "No word detected.", {"error": "No word detected at this position"})
+        if valid_words:
+            word = valid_words[0]  # Use first valid word found
+            data = cache.get(word.lower(), None)  # Try to get from cache first
+            if data is None:
+                data = fetch_definition(word)
+            current_overlay = ModernDictionaryOverlay(x, y, word, data)
+            current_overlay.show()
+            return
+
+        current_overlay = ModernDictionaryOverlay(
+            x, y, "No valid word detected.", 
+            {"error": "No valid word detected at this position"}
+        )
         current_overlay.show()
+
 
     def on_escape(self, event):
         global current_overlay, screenshot_window, is_active, is_root_destroyed
@@ -183,8 +342,6 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         self.root = ctk.CTk()
         self.root.attributes("-alpha", 0.0)
         self.root.overrideredirect(True)
-        #self.root.attributes("-alpha", 0.95)
-    
         self.root.attributes('-topmost', True)
         
         # Initialize the frame
@@ -381,6 +538,60 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
         
     def show(self):
         self.root.mainloop()
+
+def get_closest_character(click_x, click_y, character_positions):
+    """
+    Find the character closest to the click position.
+    """
+    min_distance = float('inf')
+    closest_char = None
+    closest_index = -1
+
+    for i, (char, x, y, width, height) in enumerate(character_positions):
+        center_x, center_y = x + width / 2, y + height / 2
+        distance = math.sqrt((click_x - center_x) ** 2 + (click_y - center_y) ** 2)
+        if distance < min_distance:
+            min_distance = distance
+            closest_char = char
+            closest_index = i
+
+    return closest_char, closest_index
+
+def generate_word_candidates(character_positions, start_index):
+    """
+    Generate all possible word candidates centered on the start index.
+    """
+    candidates = []
+    base_char = character_positions[start_index][0]
+
+    # Expand left and right to form substrings
+    for left in range(start_index, -1, -1):
+        if not character_positions[left][0].isalnum():
+            break
+
+        for right in range(start_index, len(character_positions)):
+            if not character_positions[right][0].isalnum():
+                break
+
+            word = ''.join([char for char, _, _, _, _ in character_positions[left:right + 1]])
+            if base_char in word:
+                candidates.append(word)
+
+    return candidates
+
+def validate_words(candidates):
+    valid_words = []
+    for word in candidates:
+        word = word.lower()
+        if word in cache:
+            valid_words.append(word)
+        else:
+            response = requests.get(f"{API_URL}{word}")
+            if response.status_code == 200:
+                cache[word] = response.json()
+                valid_words.append(word)
+                save_cache()
+    return valid_words
 
 # Capture screen asynchronously
 def capture_screen():
