@@ -273,7 +273,7 @@ class ScreenshotWindow:
         # 2. Word length (longer is better)
         # 3. Alphabetically
         valid_words.sort(key=lambda x: (-x[2], x[1], x[0]))
-        if valid_words [1][0]:
+        if len(valid_words) > 1 and valid_words[1][0]:
             if valid_words[0][0] == valid_words[1][0] + "s":
                 best_word = valid_words[1][0]
             elif valid_words[0][0] == valid_words[1][0] + "ed":
@@ -383,7 +383,7 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
             corner_radius=15, 
             border_color="#1E1E1E", 
             border_width=0,  
-            height=200
+            height=300
         )
         self.content_frame.grid(row=1, column=0, sticky="nsew", padx=10)
         self.content_frame.grid_columnconfigure(0, weight=1)
@@ -445,10 +445,10 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
 
     def _adjust_window_size(self):
         # Get required height for content
-        content_height = sum(child.winfo_reqheight() for child in self.content_frame.winfo_children())
+        content_height = sum(child.winfo_reqheight() for child in self.content_frame.winfo_children())+30
         
         # Add padding for title and margins
-        total_height = content_height + 60  # 60 pixels for padding and title
+        total_height = content_height + 90  # 60 pixels for padding and title
         
         # Set maximum height to 400 pixels
         max_height = min(total_height, 400)
