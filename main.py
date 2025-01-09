@@ -155,7 +155,7 @@ class ScreenshotWindow:
         await self.ocr_done.wait()
         self.handle_click(x, y)
 
-    def find_closest_chars(self, x: int, y: int, radius: int = 50) -> Tuple[Dict, List]:
+    def find_closest_chars(self, x: int, y: int, radius: int = 70) -> Tuple[Dict, List]:
         """Find closest character and nearby characters within radius."""
         timer = 0;
         
@@ -184,7 +184,7 @@ class ScreenshotWindow:
         
         return distances[0], distances
 
-    def find_possible_words(self, x: int, y: int, radius: int = 50) -> List[str]:
+    def find_possible_words(self, x: int, y: int, radius: int = 70) -> List[str]:
         """Find all possible words containing the character at clicked position."""
         closest_char, nearby_chars = self.find_closest_chars(x, y, radius)
         if not closest_char or not nearby_chars:
@@ -193,7 +193,8 @@ class ScreenshotWindow:
         # Group characters by line (y-position)
         chars_by_y = {}
         base_y = closest_char['y']
-        max_y_diff = 5
+        max_y_diff = max(char['height'] for char in nearby_chars) * 0.5
+
 
         for char in nearby_chars:
             y_pos = char['y']
@@ -226,7 +227,9 @@ class ScreenshotWindow:
 
         # Generate candidates using modified logic
         candidates = []
-        max_gap = 20  # Maximum pixel gap between characters to be considered part of the same word
+        avg_char_width = sum(char['width'] for char in target_line) / len(target_line)
+        max_gap = avg_char_width * 1.5
+
         
         # Continue iterating left and right without breaking early on finding a valid word
         for left in range(clicked_idx, -1, -1):
@@ -270,7 +273,16 @@ class ScreenshotWindow:
         # 2. Word length (longer is better)
         # 3. Alphabetically
         valid_words.sort(key=lambda x: (-x[2], x[1], x[0]))
-        best_word = valid_words[0][0] if valid_words else None
+        if valid_words [1][0]:
+            if valid_words[0][0] == valid_words[1][0] + "s":
+                best_word = valid_words[1][0]
+            elif valid_words[0][0] == valid_words[1][0] + "ed":
+                best_word = valid_words[1][0]
+            else:
+                best_word = valid_words[0][0] if valid_words else None
+        else:
+            best_word = valid_words[0][0] if valid_words else None
+        
         if best_word:
             cache[best_word] = fetch_definition(best_word) 
             save_cache()
