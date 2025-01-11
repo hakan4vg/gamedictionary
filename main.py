@@ -10,7 +10,7 @@ import os
 import json
 from pytesseract import Output
 import customtkinter as ctk
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Union
 import textwrap
 import re
 import asyncio
@@ -157,8 +157,6 @@ class ScreenshotWindow:
 
     def find_closest_chars(self, x: int, y: int, radius: int = 70) -> Tuple[Dict, List]:
         """Find closest character and nearby characters within radius."""
-        timer = 0;
-        
         distances = []
         for char, char_x, char_y, width, height, conf in self.characters:
             center_x = char_x + width / 2
@@ -178,7 +176,7 @@ class ScreenshotWindow:
                 })
         
         if not distances:
-            return None, []
+            return {}, []
             
         distances.sort(key=lambda x: x['distance'])
         
@@ -482,20 +480,24 @@ class ModernDictionaryOverlay(ctk.CTkFrame):
             self.root.quit()
             self.root.destroy()
         
-    def _add_content(self, data: Dict[str, Any]):
-        if "error" in data:
-            label = ctk.CTkLabel(
-                self.content_frame,
-                text=data["error"],
-                font=ctk.CTkFont(family="Inter", size=12),
-                text_color="#FF6B6B",  # Error in red
-                wraplength=300
-            )
-            label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-            return
+    def _add_content(self, data: Union[Dict[str, Any], List[Dict[str, Any]]]):
+        if isinstance(data, dict):
+            if "error" in data:
+                label = ctk.CTkLabel(
+                    self.content_frame,
+                    text=data["error"],
+                    font=ctk.CTkFont(family="Inter", size=12),
+                    text_color="#FF6B6B",
+                    wraplength=300
+                )
+                label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+                return
+            meanings = data.get("meanings", [])
+        else:  # data is List[Dict[str, Any]]
+            meanings = data[0].get("meanings", []) if data else []
 
-        row = 0
-        for meaning in data[0].get("meanings", []):
+        row = 0  # Initialize row counter
+        for meaning in meanings:
             # Part of speech
             pos_label = ctk.CTkLabel(
                 self.content_frame,
@@ -638,7 +640,8 @@ def preferences():
     root = tk.Tk()
     root.withdraw()
     
-    listener.stop()
+    if listener is not None:  # Check if listener exists
+        listener.stop()
     
     new_shortcut = simpledialog.askstring("Preferences", "Enter a new shortcut (e.g., ctrl+alt+x):")
     if new_shortcut:
